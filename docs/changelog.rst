@@ -10,7 +10,41 @@ SQLSpec Changelog
 Recent Updates
 ==============
 
-schema_dump wire_format Opt-Out (Unreleased)
+v0.46.2 - Framework Filter ``orderBy`` Aliases (Unreleased)
+-----------------------------------------------------------
+
+**Fixed:**
+
+* Litestar ``create_filter_dependencies()`` and FastAPI ``provide_filters()``
+  now accept camel-case API-facing sort aliases for configured ``orderBy``
+  fields by default. Endpoints can accept values such as
+  ``orderBy=uploadedCollections`` while producing an ``OrderByFilter`` for the
+  SQL-facing field ``uploaded_collections``. Raw configured values remain
+  accepted for compatibility, explicit aliases can still be added with
+  ``sort_field_aliases``, and ``sort_field_camelize=False`` restores
+  snake_case-only validation. (`#438
+  <https://github.com/litestar-org/sqlspec/issues/438>`_)
+
+**Safety:**
+
+* Alias normalization is closed over the configured ``sort_field`` allowlist.
+  Unknown aliases and aliases targeting fields outside ``sort_field`` are
+  rejected before SQL construction, preserving the existing identifier
+  allowlist.
+
+v0.46.1 - Litestar Filter Provider Binding Fix
+----------------------------------------------
+
+**Fixed:**
+
+* Litestar generated filter providers now use unique dependency parameter names
+  for sibling ``IN``, ``NOT IN``, null, not-null, and range filters. This stops
+  sibling providers in the same filter family from cross-binding values while
+  preserving the existing query parameter aliases. (`#435
+  <https://github.com/litestar-org/sqlspec/issues/435>`_, `#436
+  <https://github.com/litestar-org/sqlspec/pull/436>`_)
+
+v0.46.0 - ``schema_dump`` Wire-Format Opt-Out
 ---------------------------------------------
 
 **Added:**
@@ -27,8 +61,8 @@ schema_dump wire_format Opt-Out (Unreleased)
 * The internal serializer cache key now includes ``wire_format`` so that
   ``True`` and ``False`` calls for the same Struct type cannot collide.
 
-Schema Wire Correctness (Unreleased)
--------------------------------------
+v0.44.0 - Schema Wire Correctness
+---------------------------------
 
 **Fixed:**
 

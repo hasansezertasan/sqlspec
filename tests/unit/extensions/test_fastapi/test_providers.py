@@ -1,7 +1,12 @@
 """Unit tests for FastAPI filter providers."""
 
 import datetime
+import inspect
+from typing import Any, get_args
 from uuid import UUID, uuid4
+
+import pytest
+from fastapi.exceptions import RequestValidationError
 
 from sqlspec.core import (
     BeforeAfterFilter,
@@ -11,7 +16,30 @@ from sqlspec.core import (
     OrderByFilter,
     SearchFilter,
 )
-from sqlspec.extensions.fastapi.providers import DependencyDefaults, FieldNameType, FilterConfig, provide_filters
+from sqlspec.extensions.fastapi.providers import (
+    DependencyDefaults,
+    FieldNameType,
+    FilterConfig,
+    dep_cache,
+    provide_filters,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_dependency_cache() -> Any:
+    dep_cache.dependencies.clear()
+    yield
+    dep_cache.dependencies.clear()
+
+
+def _get_order_by_dependency(provider: Any) -> Any:
+    signature = provider.__signature__
+    annotation = signature.parameters["order_by_filter"].annotation
+    for arg in get_args(annotation):
+        if hasattr(arg, "dependency"):
+            return arg.dependency
+    msg = "order_by_filter dependency was not found"
+    raise AssertionError(msg)
 
 
 def test_provide_filters_returns_callable() -> None:
@@ -197,6 +225,93 @@ def test_provide_filters_custom_sort_order() -> None:
 
     filters = provider(order_by_filter=OrderByFilter(field_name="name", sort_order="asc"))
     assert filters[0].sort_order == "asc"  # type: ignore[union-attr]
+
+
+def test_provide_filters_order_by_accepts_camelized_sort_field_alias() -> None:
+    """OrderBy dependency accepts camelized aliases by default."""
+    config: FilterConfig = {"sort_field": ["created_at", "uploaded_collections"]}
+    provider = provide_filters(config)
+
+    order_by_dependency = _get_order_by_dependency(provider)
+    result = order_by_dependency(field_name="uploadedCollections", sort_order="asc")
+
+    assert isinstance(result, OrderByFilter)
+    assert result.field_name == "uploaded_collections"
+    assert result.sort_order == "asc"
+
+
+def test_provide_filters_order_by_accepts_explicit_sort_field_alias() -> None:
+    """OrderBy dependency accepts explicit aliases when configured."""
+    config: FilterConfig = {
+        "sort_field": ["created_at", "uploaded_collections"],
+        "sort_field_aliases": {"uploadedCollections": "uploaded_collections"},
+    }
+    provider = provide_filters(config)
+
+    order_by_dependency = _get_order_by_dependency(provider)
+    result = order_by_dependency(field_name="uploadedCollections", sort_order="asc")
+
+    assert isinstance(result, OrderByFilter)
+    assert result.field_name == "uploaded_collections"
+    assert result.sort_order == "asc"
+
+
+def test_provide_filters_order_by_keeps_snake_case_sort_field_in_alias_mode() -> None:
+    """Automatic alias mode preserves legacy snake_case orderBy values."""
+    config: FilterConfig = {"sort_field": ["created_at", "uploaded_collections"]}
+    provider = provide_filters(config)
+
+    order_by_dependency = _get_order_by_dependency(provider)
+    result = order_by_dependency(field_name="uploaded_collections", sort_order="desc")
+
+    assert isinstance(result, OrderByFilter)
+    assert result.field_name == "uploaded_collections"
+    assert result.sort_order == "desc"
+
+
+def test_provide_filters_order_by_invalid_alias_uses_fastapi_error_location() -> None:
+    """Invalid aliases raise RequestValidationError at query.orderBy."""
+    config: FilterConfig = {"sort_field": ["created_at", "uploaded_collections"]}
+    provider = provide_filters(config)
+
+    order_by_dependency = _get_order_by_dependency(provider)
+    with pytest.raises(RequestValidationError) as exc_info:
+        order_by_dependency(field_name="uploadedCollectionz", sort_order="asc")
+
+    errors = exc_info.value.errors()
+    assert errors[0]["loc"] == ("query", "orderBy")
+    assert "Invalid orderBy field 'uploadedCollectionz'" in errors[0]["msg"]
+    assert "Allowed fields: createdAt, uploadedCollections" in errors[0]["msg"]
+    assert "uploaded_collections" not in errors[0]["msg"]
+
+
+def test_provide_filters_order_by_uses_display_alias_as_query_default() -> None:
+    """The orderBy dependency default uses the display alias by default."""
+    config: FilterConfig = {"sort_field": ["created_at", "uploaded_collections"]}
+    provider = provide_filters(config)
+
+    order_by_dependency = _get_order_by_dependency(provider)
+    field_param = inspect.signature(order_by_dependency).parameters["field_name"]
+
+    assert field_param.default == "createdAt"
+
+
+def test_provide_filters_order_by_can_disable_camelized_sort_field_aliases() -> None:
+    """sort_field_camelize=False keeps orderBy validation snake_case-only."""
+    config: FilterConfig = {"sort_field": ["created_at", "uploaded_collections"], "sort_field_camelize": False}
+    provider = provide_filters(config)
+
+    order_by_dependency = _get_order_by_dependency(provider)
+    field_param = inspect.signature(order_by_dependency).parameters["field_name"]
+
+    assert field_param.default == "created_at"
+    with pytest.raises(RequestValidationError) as exc_info:
+        order_by_dependency(field_name="uploadedCollections", sort_order="asc")
+
+    errors = exc_info.value.errors()
+    assert errors[0]["loc"] == ("query", "orderBy")
+    assert "Invalid orderBy field 'uploadedCollections'" in errors[0]["msg"]
+    assert "Allowed fields: created_at, uploaded_collections" in errors[0]["msg"]
 
 
 def test_provide_filters_in_fields() -> None:
