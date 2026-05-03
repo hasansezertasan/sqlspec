@@ -13,6 +13,36 @@ Recent Updates
 v0.46.2 - Framework Filter ``orderBy`` Aliases (Unreleased)
 -----------------------------------------------------------
 
+**Changed (breaking default):**
+
+* ``sqlspec.utils.serializers.schema_dump`` (and its helpers
+  ``serialize_collection`` / ``get_collection_serializer``) now default
+  ``wire_format=False``. Calling ``schema_dump(struct)`` on a ``msgspec.Struct``
+  declared with ``rename=`` now returns Python attribute names by default
+  (matching Pydantic, dataclass, and attrs output) instead of wire-aligned
+  ``field.encode_name`` keys. Pass ``wire_format=True`` explicitly to restore
+  the prior wire-aligned output for JSON / API payloads. This default flip
+  closes the silent footgun where ``sql.update(t).set(**schema_dump(struct))``
+  emitted camelCase column names for snake_case database tables. The kwarg
+  remains a no-op for non-msgspec inputs.
+
+**Added:**
+
+* ``Insert.values_from(data, *, exclude_unset=True)``,
+  ``Insert.values_from_many(items, *, exclude_unset=True)``, and
+  ``Update.set_from(data, *, exclude_unset=True)`` builder methods. Each accepts
+  any schema kind (dict, dataclass, ``msgspec.Struct``, ``pydantic.BaseModel``,
+  attrs class) and dispatches through ``schema_dump(wire_format=False)`` so SQL
+  column names are always Python attribute names regardless of any wire-rename
+  meta on the source schema.
+
+**Deprecated:**
+
+* ``Insert.values_from_dict`` and ``Insert.values_from_dicts`` now emit a
+  ``DeprecationWarning`` pointing at ``Insert.values_from`` /
+  ``Insert.values_from_many`` respectively. The dict-shaped methods continue to
+  work; they are scheduled for removal in 0.48.0.
+
 **Fixed:**
 
 * Missing named SQL statements now raise ``SQLStatementNotFoundError``, a
